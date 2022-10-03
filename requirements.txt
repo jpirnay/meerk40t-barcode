@@ -1,2 +1,3 @@
 meerk40t
 qrcode
+python-barcode

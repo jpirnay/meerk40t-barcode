@@ -1,173 +1,212 @@
-from meerk40t.svgelements import Path, Matrix
-
-
 def module_plugin(module, lifecycle):
     """
-    This plugin attaches to the module/wxMeerK40t for the opening and closing of the gui. If the gui is never launched
-    this plugin is never activated. wxMeerK40t is the gui wx.App object.
-
-    :param module:
-    :param lifecycle:
+    This plugin attaches to the module/wxMeerK40t for the opening and closing of the gui. If the gui is never
+    launched this plugin is never activated. wxMeerK40t is the gui wx.App object. If the module is loaded several times
+    each module will call this function with the specific `module`
+    :param module: Specific module this lifecycle event is for.
+    :param lifecycle: lifecycle event being regarded.
     :return:
     """
-    if lifecycle == "module":
-        # Responding to the "module" call makes this a module plugin for the specific module replied.
+    # print(f"module:example {lifecycle}")
+    if lifecycle == 'module':
+        # Responding to "module" makes this a module plugin for the specific module replied.
         return "module/wxMeerK40t"
-    elif lifecycle == "module_opened":
+    elif lifecycle == 'module_open':
+        # print("wxMeerK40t App was lauched.")
         pass
-    elif lifecycle == "module_closed":
+    elif lifecycle == 'module_close':
+        # print("wxMeerK40t App was closed.")
         pass
-    elif lifecycle == "shutdown":
+    elif lifecycle == 'shutdown':
+        # print("wxMeerK40t App shutdown.")
         pass
 
 
-def service_plugin(service, lifecycle):
+
+def invalidating_plugin(kernel, lifecycle):
+    if lifecycle == "precli":
+        kernel.register("invalidating_plugin_existed", True)
+    if lifecycle == "invalidate":
+        return True
+
+
+def simple_plugin(kernel, lifecycle):
     """
-    This plugin attaches to the lhystudios devices. Any lhystudios device has each lifecycle event passed to this
-    plugin. There may be more than one such driver.
-
-    :param service:
-    :param lifecycle:
-    :return:
+    Simple plugin. Catches the lifecycle it needs registers some values.
+    @param kernel:
+    @param lifecycle:
+    @return:
     """
-    if lifecycle == "service":
-        # Responding to the "service" call makes this a service plugin for the specific service replied.
-        return "provider/device/lhystudios"
-    elif lifecycle == "added":
-        """
-        Service is added to the list of services for this provider type. In our example we are checking the device
-        service for the lhystudios driver.
-        """
-        pass
-    elif lifecycle == "service_attach":
-        """
-        Our given service is attached. The current context.device is the 'service' passed in this plugin.
-        """
-        pass
-    elif lifecycle == "assigned":
-        """
-        This is a plugin was started flagged to be assigned. For many drivers this launches their respective config
-        window.
-        """
-        pass
-    elif lifecycle == "service_detach":
-        """
-        Our given service is no longer the context.device for the kernel.
-        """
-        pass
-    elif lifecycle == "shutdown":
-        """
-        The service is shutdown.
-        """
-        pass
-
-
-def plugin(kernel, lifecycle):
-    """
-    This is the kernel level plugin registration.
-
-    :param kernel:
-    :param lifecycle:
-    :return:
-    """
-    print (f"lifecycle={lifecycle}")
-    if lifecycle == "plugins":
-        return [service_plugin, module_plugin]
-    if lifecycle == "preregister":
-        """
-        During the pre-register phase the module wxMeerK40t is registered and opened for the gui.
-        """
-        pass
     if lifecycle == "register":
         """
         Register the barcodes we are able to create.
         """
         has_qr_code_module = False
         try:
-            import qrlib
-
+            import qrcode
             has_qr_code_module = True
         except ModuleNotFoundError:
             pass
 
         has_bar_code_module = False
-        # try:
-        #     import qrlib
-        #     has_bas_code_module = True
-        # except ModuleNotFoundError:
-        #     pass
+        try:
+            import barcode
+            has_bar_code_module = True
+        except ModuleNotFoundError:
+            pass
 
         if has_qr_code_module:
             register_qr_code_stuff(kernel)
         if has_bar_code_module:
             register_bar_code_stuff(kernel)
-    if lifecycle == "configure":
+
+
+def plugin(kernel, lifecycle):
+    """
+    This is our main plugin. It provides examples of every lifecycle event and what they do and are used for. Many of
+    these events are simply to make sure some module events occur after or before other module events. The lifecycles
+    also permit listeners to attach and detach during the lifecycle of a module, and insures everything can interact
+    smoothly.
+    :param kernel:
+    :param lifecycle:
+    :return:
+    """
+    # print(f"Kernel plugin calling lifecycle: {lifecycle}")
+    if lifecycle == "plugins":
         """
-        Stage between registration and before the boot stages.
+        All plugins including ones added with this call are added to the kernel. A list of additions plugins will add
+        those to the list of plugins.
+        """
+        return [simple_plugin,]
+    if lifecycle == "service":
+        """
+        Responding to this with a service provider makes this plugin a service plugin.
+
+        Note: Normally we ignore this lifecycle.
+        """
+        return None  # This is not a service plugin, check service_plugin for an example of that.
+    if lifecycle == "module":
+        """
+        Responding to a registered module provider makes this plugin a module plugin.
+
+        Note: Normally we ignore this lifecycle.
+        """
+        return None  # This is not a module plugin, check module_plugin for an example of this.
+    if lifecycle == "precli":
+        """
+        This lifecycle occurs before the command line options are processed. Anything part of the main CLI is processed
+        after this.
+        """
+    if lifecycle == "cli":
+        """
+        This life cycle is intended to process command line information. It is sometimes used to register features or
+        other flags that could be used during the invalidate.
+        """
+        if kernel.lookup("invalidating_plugin_existed"):
+            # print("Our invalidating plugin existed and put this here.")
+            pass
+    if lifecycle == "invalidate":
+        """
+        Invalidate is called with a "True" response if this plugin isn't valid or cannot otherwise execute. This is
+        often useful if a plugin is only valid for a particular OS. For example `winsleep` serve no purpose for other
+        operating systems, so it invalidates itself.
+        """
+        try:
+            import qrcode
+            import qrcode.image.svg
+        except ImportError:
+            # print("Barcode plugin could not load because qrcode is not installed.")
+            return True
+        try:
+            import barcode
+        except ImportError:
+            # print("Barcode plugin could not load because barcode is not installed.")
+            return True
+
+        return False  # We are valid.
+
+    if lifecycle == 'preregister':
+        """
+        During the pre-register phase the module wxMeerK40t is registered and opened in gui mode.
         """
         pass
-    elif lifecycle == "preboot":
+    if lifecycle == 'register':
         """
-        Preboot is usually where device services are started. Since many booting elements need to the devices to exist
-        services should be launched at this stage and prior to the boot.
+        Register our various processes. These should modify the registered values within meerk40t. This stage is
+        used for general purpose lookup registrations.
+        """
+        # See simple plugin for examples of registered objects.
+        pass
+
+    if lifecycle == 'configure':
+        """
+        Configure is a preboot stage where everything is registered but elements are not yet booted.
         """
         pass
-    elif lifecycle == "boot":
+    elif lifecycle == 'boot':
         """
         Start all services.
 
-        Register any scheduled tasks or threads that need to be running for our plugin to work.
-        Register various choices within services which should all be started.
+        The kernel strictly registers the lookup_listeners and signal_listeners during this stage. This permits modules
+        and services to listen for signals and lookup changes during the active phases of their lifecycles.
         """
         pass
-    elif lifecycle == "postboot":
+    elif lifecycle == 'postboot':
         """
         Registers some additional choices such as some general preferences.
         """
-    elif lifecycle == "prestart":
+    elif lifecycle == 'prestart':
         """
-        CLI specified input file is loading during the pre-start phase
+        CLI specified input file is loading during the pre-start phase.
         """
         pass
-    elif lifecycle == "start":
+    elif lifecycle == 'start':
         """
         Nothing happens.
         """
         pass
-    elif lifecycle == "poststart":
-        """
-        CLI specified output file is written during the poststart phase
-        """
-        pass
-    elif lifecycle == "ready":
+    elif lifecycle == 'poststart':
         """
         Nothing happens.
         """
         pass
-    elif lifecycle == "finished":
+    elif lifecycle == 'ready':
         """
         Nothing happens.
         """
         pass
-    elif lifecycle == "premain":
+    elif lifecycle == 'finished':
         """
         Nothing happens.
         """
         pass
-    elif lifecycle == "mainloop":
+    elif lifecycle == 'premain':
+        """
+        Nothing happens.
+        """
+        pass
+    elif lifecycle == 'mainloop':
         """
         This is the start of the gui and will capture the default thread as gui thread. If we are writing a new gui
         system and we need this thread to do our work. It should be captured here. This is the main work of the program.
 
-        You cannot ensure that more than one plugin can catch the mainloop.
+        You cannot ensure that more than one plugin can catch the mainloop. Capture of the mainloop happens for the
+        duration of the gui app, if one exists.
         """
         pass
-    elif lifecycle == "preshutdown":
+    elif lifecycle == 'postmain':
+        """
+        Everything that was to grab the mainloop thread has finished. We are fully booted. However in most cases since
+        the gui has been killed, the kernel has likely been told to shutdown too and will end shortly.
+        """
+        pass
+    elif lifecycle == 'preshutdown':
         """
         Preshutdown saves the current activated device to the kernel.root to ensure it has the correct last value.
         """
         pass
-    elif lifecycle == "shutdown":
+
+    elif lifecycle == 'shutdown':
         """
         Meerk40t's closing down. Our plugin should adjust accordingly. All registered meerk40t processes will be stopped
         any plugin processes should also be stopped so the program can close correctly. Depending on the order of
@@ -178,9 +217,15 @@ def plugin(kernel, lifecycle):
 
 
 def register_bar_code_stuff(kernel):
+    """
+    We use the python-barcode library (https://github.com/WhyNotHugo/python-barcode)
+    """
     _ = kernel.translation
     _kernel = kernel
+    import barcode
+    from meerk40t.svgelements import Path, Matrix
 
+    return
 
 def register_qr_code_stuff(kernel):
     """
@@ -190,6 +235,7 @@ def register_qr_code_stuff(kernel):
     _kernel = kernel
     import qrcode
     import qrcode.image.svg
+    from meerk40t.svgelements import Path, Matrix
 
     # QR-Code generation
     @kernel.console_option(
@@ -199,6 +245,7 @@ def register_qr_code_stuff(kernel):
         help=_("error correction, one of L (7%), M (15%), Q (25%), H (30%"),
     )
     @kernel.console_option("border", "b", type=int, help=_("border"))
+    @kernel.console_option("version", "v", type=int, help=_("size (1..40)"))
     @kernel.console_argument("x_pos", type=str)
     @kernel.console_argument("y_pos", type=str)
     @kernel.console_argument("dim", type=str)
@@ -219,6 +266,7 @@ def register_qr_code_stuff(kernel):
         msg=None,
         errcode=None,
         border=None,
+        version=None,
         data=None,
         **kwargs,
     ):
@@ -226,7 +274,6 @@ def register_qr_code_stuff(kernel):
         Example is part of the meerk40t example plugin this command only prints hello world. This part of the
         command will show up in the extended help for "help example".
         """
-        channel(f"Parameters: x={x_pos}, y={y_pos}, dim={dim}, text={msg}")
         elements = _kernel.elements
         if msg is not None:
             msg = elements.mywordlist.translate(msg)
@@ -257,7 +304,7 @@ def register_qr_code_stuff(kernel):
         if border is None or border < 4:
             border = 4
         qr = qrcode.QRCode(
-            version=None,
+            version=version,
             error_correction=errc,
             box_size=10,
             border=border,
@@ -266,7 +313,10 @@ def register_qr_code_stuff(kernel):
         qr.add_data(msg)
         factory = qrcode.image.svg.SvgPathImage
         qr.image_factory = factory
-        img = qr.make_image(fit=True)
+        if version is None:
+            img = qr.make_image(fit=True)
+        else:
+            img = qr.make_image()
         # We do get a ready to go svg string, but let's try to
         # extract some basic information
         # 1) Dimension
@@ -281,8 +331,8 @@ def register_qr_code_stuff(kernel):
             if idx >= 0:
                 txt = txt [:idx]
                 vp = txt.split(" ")
-                dim_x = vp[2]+ "mm"
-                dim_y = vp[3]+ "mm"
+                dim_x = str(float(vp[2]) - 2 * border) + "mm"
+                dim_y = str(float(vp[3]) - 2 * border) + "mm"
         svg_x = elements.length_x(dim_x)
         svg_y = elements.length_y(dim_y)
         # 2) Path definition
@@ -297,26 +347,40 @@ def register_qr_code_stuff(kernel):
                 txt = txt [:idx-1]
                 pathstr = txt
         if len(pathstr):
-            matrix = Matrix()
+            mm = elements.length("1mm")
+            sx = mm
+            sy = mm
+
+            sx *= wd / svg_x
+            sy *= wd / svg_y
+            px = -border * mm + xp
+            py = -border * mm + yp
+            matrix = Matrix(f"scale({sx},{sy})")
+            # channel(f"scale({sx},{sy})")
             path = Path(
                 fill="black",
-                stroke="black",
-                # fillrule=Fillrule.FILLRULE_NONZERO,
+                stroke=None,
+                width=dim_x,
+                height=dim_y,
+                matrix=Matrix(),
             )
             path.parse(pathstr)
-            scale_x = wd / svg_x
-            scale_y = wd / svg_y
-            mat_string = f"scale({scale_x}, {scale_y})"
-            matrix *= mat_string
-            mat_string += f"translate({xp},{yp})"
-            matrix *= mat_string
-            path.transform *= Matrix(matrix)
+            matrix = Matrix(f"scale({sx},{sy})")
+            path.transform *= matrix
+            # channel(f"pathstr={pathstr[:10]}...{pathstr[-10:]}")
+            # channel(f"x={dim_x}, y={dim_y},")
             node = elements.elem_branch.add(
                 path=abs(path),
                 stroke_width=0,
                 stroke_scaled=False,
                 type="elem path",
                 fillrule= 0,     # nonzero
+                label=f"qr={msg}",
             )
+            node.matrix.post_translate(-node.bounds[0] + xp, -node.bounds[1] + yp)
+            node.modified()
+            elements.set_emphasis([node])
+            node.focus()
 
-        return [node]
+        data = [node]
+        return elements, data
