@@ -70,6 +70,7 @@ def plugin(kernel, lifecycle):
     :param lifecycle:
     :return:
     """
+    print (f"lifecycle={lifecycle}")
     if lifecycle == "plugins":
         return [service_plugin, module_plugin]
     if lifecycle == "preregister":
