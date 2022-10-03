@@ -1,10 +1,10 @@
 # meerk40t-example
-MeerK40t plugin for example
+MeerK40t plugin to create barcodes
 
 
-Example MeerK40t plugin.
+barcode MeerK40t plugin.
 
-* `example` prints "Hello World"
+* `qrcode 2cm 2cm 4cm 'Test' ` creates a 4cm path object at 2cm 2cm with the qrcode of 'Test'
 
 
 # Installing
