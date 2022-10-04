@@ -215,7 +215,6 @@ def plugin(kernel, lifecycle):
         """
         pass
 
-
 def register_bar_code_stuff(kernel):
     """
     We use the python-barcode library (https://github.com/WhyNotHugo/python-barcode)
@@ -223,9 +222,399 @@ def register_bar_code_stuff(kernel):
     _ = kernel.translation
     _kernel = kernel
     import barcode
-    from meerk40t.svgelements import Path, Matrix
+    from meerk40t.svgelements import Path, Matrix, Rect, Text, Color
 
-    return
+    @kernel.console_option(
+        "notext", "n", type=bool, action="store_true", help=_("suppress text display")
+    )
+    @kernel.console_option(
+        "asgroup",
+        "a",
+        type=bool,
+        action="store_true",
+        help=_("create a group of rects instead of a path"),
+    )
+    @kernel.console_argument("x_pos", type=str, help=_("X-Position of barcode"))
+    @kernel.console_argument("y_pos", type=str, help=_("Y-Position of barcode"))
+    @kernel.console_argument("dimx", type=str, help=_("Width of barcode, may be 'auto' to keep native width"))
+    @kernel.console_argument("dimy", type=str, help=_("Height of barcode, may be 'auto' to keep native height"))
+    @kernel.console_argument("btype", type=str, help=_("Barcode type"))
+    @kernel.console_argument("code", type=str, help=_("The code to process"))
+    @kernel.console_command(
+        "barcode",
+        help=_("Creates a barcode."),
+        input_type=("elements", None),
+        output_type="elements",
+    )
+    def create_barcode(
+        command,
+        channel,
+        _,
+        x_pos=None,
+        y_pos=None,
+        dimx=None,
+        dimy=None,
+        btype=None,
+        code=None,
+        notext=None,
+        asgroup=None,
+        data=None,
+        **kwargs,
+    ):
+        def poor_mans_svg_parser(svg_str, actionable):
+            origin_x = float("inf")
+            origin_y = float("inf")
+            maximum_height = 0
+            maximum_width = 0
+            if actionable:
+                # We run through it just to establish
+                # the maximum_width and maximum_height
+                (
+                    maximum_width,
+                    maximum_height,
+                    origin_x,
+                    origin_y,
+                ) = poor_mans_svg_parser(svg_str, False)
+                scale_x = 1
+                scale_y = 1
+                if dimx != "auto":
+                    if maximum_width - origin_x != 0:
+                        scale_x = elements.length_x(dimx) / (maximum_width - origin_x)
+                if dimy != "auto":
+                    if maximum_height - origin_y != 0:
+                        scale_y = elements.length_y(dimy) / (maximum_height - origin_y)
+                offset_x = elements.length_x(x_pos)
+                offset_y = elements.length_y(y_pos)
+            groupnode = None
+            barcodepath = None
+            pathcode = ""
+            data = []
+            pattern_rect = "<rect"
+            pattern_text = "<text"
+            pattern_group_start = "<g "
+            pattern_group_end = "</g>"
+            # A barcode just contains a couple of rects and
+            # a text inside a group, so no need to get overly fancy...
+            # print(svg_str)
+            svg_lines = svg_str.split("\r\n")
+            for line in svg_lines:
+                # print (f"{line}")
+                if pattern_rect in line:
+                    subpattern = (
+                        ('height="', "height"),
+                        ('width="', "width"),
+                        ('x="', "x"),
+                        ('y="', "y"),
+                        ('style="', ""),
+                    )
+                    line_items = line.strip().split(" ")
+                    elem = {
+                        "type": "elem rect",
+                        "x": None,
+                        "y": None,
+                        "width": None,
+                        "height": None,
+                        "fill": None,
+                        "stroke": None,
+                    }
+                    for idx, item in enumerate(line_items):
+                        for pattern in subpattern:
+                            if item.startswith(pattern[0]):
+                                content = item[len(pattern[0]) : -1]
+                                # print (f"Found '{content}' for '{pattern[0]}' in '{item}' --> {pattern[1]}")
+                                key = pattern[1]
+                                if key == "":
+                                    # Special case fill/stroke
+                                    if "fill:black" in content:
+                                        elem["fill"] = "black"
+                                    if "stroke:black" in content:
+                                        elem["stroke"] = "black"
+                                else:
+                                    elem[pattern[1]] = content
+                    # print (f"Line {line}")
+                    # print (f"Decoded {elem['type']}: x={elem['x']}, y={elem['y']}, w={elem['width']}, h={elem['height']}, stroke={elem['stroke']}, fill={elem['fill']}")
+                    if elem["x"] is None or elem["y"] is None:
+                        continue
+                    if actionable:
+                        this_x = offset_x + scale_x * (
+                            elements.length_x(elem["x"]) - origin_x
+                        )
+                        this_y = offset_y + scale_y * (
+                            elements.length_y(elem["y"]) - origin_y
+                        )
+                        this_wd = scale_x * elements.length_x(elem["width"])
+                        this_ht = scale_y * elements.length_y(elem["height"])
+                        if aspath:
+                            # barcodepath.move(this_x, this_y)
+                            # barcodepath.line(this_x + this_wd, this_y)
+                            # barcodepath.line(this_x + this_wd, this_y + this_ht)
+                            # barcodepath.line(this_x, this_y + this_ht)
+                            # barcodepath.line(this_x, this_y)
+                            # barcodepath.closed(relative=True)
+                            pathcode += f"M {this_x:.1f} {this_y:.1f} "
+                            pathcode += f"L {this_x + this_wd:.1f} {this_y:.1f} "
+                            pathcode += f"L {this_x + this_wd:.1f} {this_y + this_ht:.1f} "
+                            pathcode += f"L {this_x:.1f} {this_y + this_ht:.1f} "
+                            pathcode += f"L {this_x:.1f} {this_y:.1f} "
+                            pathcode += f"z "
+                        else:
+                            rect = Rect(
+                                x=this_x,
+                                y=this_y,
+                                width=this_wd,
+                                height=this_ht,
+                            )
+                            node = elements.elem_branch.add(
+                                shape=rect, type="elem rect"
+                            )
+                            node.stroke = (
+                                None
+                                if elem["stroke"] is None
+                                else Color(elem["stroke"])
+                            )
+                            node.fill = (
+                                None if elem["fill"] is None else Color(elem["fill"])
+                            )
+                            data.append(node)
+                            if groupnode is not None:
+                                groupnode.append_child(node)
+                    else:
+                        # just establish dimensions
+                        # print (f"check rect extent for x={elem['x']}, y={elem['y']}, wd={elem['width']}, ht={elem['height']}")
+                        this_extent_x = elements.length_x(elem["x"])
+                        this_extent_y = elements.length_y(elem["y"])
+                        this_extent_maxx = this_extent_x + elements.length_x(
+                            elem["width"]
+                        )
+                        this_extent_maxy = this_extent_y + elements.length_y(
+                            elem["height"]
+                        )
+                        origin_x = min(origin_x, this_extent_x)
+                        origin_y = min(origin_y, this_extent_y)
+                        maximum_width = max(maximum_width, this_extent_maxx)
+                        maximum_height = max(maximum_height, this_extent_maxy)
+                elif pattern_text in line:
+                    NATIVE_UNIT_PER_INCH = 65535
+                    DEFAULT_PPI = 96.0
+                    UNITS_PER_PIXEL = NATIVE_UNIT_PER_INCH / DEFAULT_PPI
+                    subpattern = (
+                        ('height="', "height"),
+                        ('width="', "width"),
+                        ('x="', "x"),
+                        ('y="', "y"),
+                        ('style="', ""),
+                    )
+                    stylepattern = (
+                        ("fill:", "fill"),
+                        ("font-size:", "size"),
+                        ("text-anchor:", "anchor"),
+                    )
+                    elem = {
+                        "type": "elem text",
+                        "text": None,
+                        "x": None,
+                        "y": None,
+                        "size": None,
+                        "anchor": None,
+                        "fill": None,
+                        "stroke": None,
+                    }
+                    line_items = line.strip().split(" ")
+                    for idx, item in enumerate(line_items):
+                        for pattern in subpattern:
+                            if item.startswith(pattern[0]):
+                                content = item[len(pattern[0]) : -1]
+                                # print (f"Found '{content}' for '{pattern[0]}' in '{item}' --> {pattern[1]}")
+                                key = pattern[1]
+                                if key == "":
+                                    style_items = content.strip().split(";")
+                                    for sidx, sitem in enumerate(style_items):
+                                        # print(f"Styleitem: {sitem}")
+                                        if sitem.startswith('">'):
+                                            content = sitem[2:]
+                                            eidx = content.find("</text")
+                                            if eidx > 0:
+                                                content = content[:eidx]
+                                            elem["text"] = content
+                                            continue
+                                        for spattern in stylepattern:
+                                            if sitem.startswith(spattern[0]):
+                                                content = sitem[len(spattern[0]) :]
+                                                # print (f"Found '{content}' for '{pattern[0]}' in '{item}' --> {pattern[1]}")
+                                                key = spattern[1]
+                                                if key != "":
+                                                    elem[spattern[1]] = content
+                                else:
+                                    elem[pattern[1]] = content
+
+                    # print (f"Line {line}")
+                    # print (f"Decoded {elem['type']}: txt='{elem['text']}', x={elem['x']}, y={elem['y']}, anchor={elem['anchor']}, size={elem['size']}, stroke={elem['stroke']}, fill={elem['fill']}")
+                    if elem["x"] is None or elem["y"] is None:
+                        continue
+                    if actionable and not skiptext:
+                        this_x = offset_x + scale_x * (
+                            elements.length_x(elem["x"]) - origin_x
+                        )
+                        # Y is always too high - we compensate that by bringing it up
+                        #
+                        compensation = 0
+                        if elem["size"] is not None:
+                            if elem["size"].endswith("pt"):
+                                this_size = float(elem["size"][:-2])
+                            else:
+                                this_size = float(elem["size"])
+                            compensation = 1.25 * this_size * NATIVE_UNIT_PER_INCH / 72
+                        # print (f"Size: {this_size:.1f}, Compensation: {compensation:.1f}")
+                        this_y = offset_y - scale_y * compensation + scale_y * (
+                            elements.length_y(elem["y"]) - origin_y
+                        )
+                        node = elements.elem_branch.add(
+                            text=elem["text"],
+                            matrix=Matrix(
+                                f"translate({this_x}, {this_y}) scale({UNITS_PER_PIXEL})"
+                            ),
+                            anchor="start" if elem["anchor"] is None else elem["anchor"],
+                            type="elem text",
+                        )
+                        if elem["size"] is not None:
+                            font_size = int(this_size * min(scale_x, scale_y))
+                            if font_size <= 1:
+                                font_size = this_size
+                            node.font_size = font_size
+                        node.stroke = (
+                            None if elem["stroke"] is None else Color(elem["stroke"])
+                        )
+                        node.fill = (
+                            None if elem["fill"] is None else Color(elem["fill"])
+                        )
+                        data.append(node)
+                        if groupnode is not None:
+                            groupnode.append_child(node)
+                    else:
+                        # We establish dimensions, but we don't apply it
+                        # print (f"check text extent for x={elem['x']}, y={elem['y']}")
+                        this_extent_x = elements.length_x(elem["x"])
+                        this_extent_y = elements.length_y(elem["y"])
+                        # maximum_width = max(maximum_width, this_extent_x)
+                        # maximum_height = max(maximum_height, this_extent_y)
+                elif pattern_group_end in line:
+                    #  print (f"Group end: '{line}'")
+                    if actionable and aspath:
+                        # We need to close and add the path
+                        barcodepath = Path(
+                            fill=Color("black"),
+                            stroke=None,
+                            fillrule=0,  # FILLRULE_NONZERO,
+                            matrix=Matrix(),
+                        )
+                        barcodepath.parse(pathcode)
+                        node = elements.elem_branch.add(
+                            path=abs(barcodepath),
+                            stroke_width=0,
+                            stroke_scaled=False,
+                            type="elem path",
+                            fillrule=0,  # nonzero
+                            label=f"{btype}={code}",
+                        )
+                        node.matrix.post_translate(
+                            -node.bounds[0] + offset_x, -node.bounds[1] + offset_y
+                        )
+                        node.modified()
+                        node.stroke = (
+                            None if elem["stroke"] is None else Color(elem["stroke"])
+                        )
+                        node.fill = (
+                            None if elem["fill"] is None else Color(elem["fill"])
+                        )
+                        data.append(node)
+                        if groupnode is not None:
+                            groupnode.append_child(node)
+
+                    groupnode = None
+                elif pattern_group_start in line:
+                    # print(f"Group start: '{line}'")
+                    if actionable:
+                        if aspath:
+                            pathcode = ""
+                        if not skiptext:
+                            groupnode = elements.elem_branch.add(
+                                type="group",
+                                label=f"Barcode {btype}: {code}",
+                                id=f"{btype}",
+                            )
+                            data.append(groupnode)
+            return maximum_width, maximum_height, origin_x, origin_y
+
+        # ---------------------------------
+
+        elements = _kernel.elements
+        data = []
+        if code is not None:
+            code = elements.mywordlist.translate(code)
+        if btype is None:
+            btype = "ean14"
+        btype = btype.lower()
+        if (
+            x_pos is None
+            or y_pos is None
+            or dimx is None
+            or dimy is None
+            or code is None
+            or code == ""
+        ):
+            params = "barcode x_pos y_pos dimx dimy btype code"
+            channel(_("Please provide all parameters: {params}").format(params=params))
+            channel(
+                _("Supported formats: {all}").format(
+                    all=",".join(barcode.PROVIDED_BARCODES)
+                )
+            )
+            return
+        if btype not in barcode.PROVIDED_BARCODES:
+            channel(
+                _("Invalid format, supported: {all}").format(
+                    all=",".join(barcode.PROVIDED_BARCODES)
+                )
+            )
+            return
+        # Check lengths for validity
+        try:
+            if dimx != "auto":
+              __ = elements.length_x(dimx)
+            if dimy != "auto":
+              __ = elements.length_x(dimy)
+            __ = elements.length_x(x_pos)
+            __ = elements.length_y(y_pos)
+        except ValueError:
+            channel(_("Invalid dimensions provided"))
+            return
+        aspath = True
+        skiptext = False
+        if asgroup is not None:
+            aspath = False
+        if notext is not None:
+            skiptext = True
+
+        bcode_class = barcode.get_barcode_class(btype)
+        if hasattr(bcode_class, "digits"):
+            digits = getattr(bcode_class, "digits", 0)
+            if digits > 0:
+                while len(code) < digits:
+                    code = "0" + code
+        writer = barcode.writer.SVGWriter()
+        try:
+            my_barcode = bcode_class(code, writer=writer)
+        except:
+            channel(_("Invalid characters in barcode"))
+            return
+        if hasattr(my_barcode, "build"):
+            my_barcode.build()
+        bytes_result = my_barcode.render()
+        result = bytes_result.decode("utf-8")
+        max_wd, max_ht, ox, oy = poor_mans_svg_parser(result, True)
+        elements.signal("element_added", data)
+        return "elements", data
+
 
 def register_qr_code_stuff(kernel):
     """
@@ -244,12 +633,13 @@ def register_qr_code_stuff(kernel):
         type=str,
         help=_("error correction, one of L (7%), M (15%), Q (25%), H (30%"),
     )
-    @kernel.console_option("border", "b", type=int, help=_("border"))
+    @kernel.console_option("boxsize", "x", type=int, help=_("Boxsize (default 10)"))
+    @kernel.console_option("border", "b", type=int, help=_("Border around qr-code (default 4)"))
     @kernel.console_option("version", "v", type=int, help=_("size (1..40)"))
-    @kernel.console_argument("x_pos", type=str)
-    @kernel.console_argument("y_pos", type=str)
-    @kernel.console_argument("dim", type=str)
-    @kernel.console_argument("msg", type=str)
+    @kernel.console_argument("x_pos", type=str, help=_("X-position of qr-code"))
+    @kernel.console_argument("y_pos", type=str, help=_("Y-position of qr-code"))
+    @kernel.console_argument("dim", type=str, help=_("Width/length of qr-code"))
+    @kernel.console_argument("code", type=str, help=_("Text to create qr-code from"))
     @kernel.console_command(
         "qrcode",
         help=_("Creates a qr code."),
@@ -263,8 +653,9 @@ def register_qr_code_stuff(kernel):
         x_pos=None,
         y_pos=None,
         dim=None,
-        msg=None,
+        code=None,
         errcode=None,
+        boxsize=None,
         border=None,
         version=None,
         data=None,
@@ -275,17 +666,21 @@ def register_qr_code_stuff(kernel):
         command will show up in the extended help for "help example".
         """
         elements = _kernel.elements
-        if msg is not None:
-            msg = elements.mywordlist.translate(msg)
-        if x_pos is None or y_pos is None or dim is None or msg is None or msg == "":
-            params = "qrcode x_pos y_pos dim msg"
+        if code is not None:
+            code = elements.mywordlist.translate(code)
+        if x_pos is None or y_pos is None or dim is None or code is None or code == "":
+            params = "qrcode x_pos y_pos dim code"
             channel(_("Please provide all parameters: {params}").format(params=params))
             return
-        xp = elements.length_x(x_pos)
-        yp = elements.length_y(y_pos)
-        wd = elements.length(dim)
+        try:
+            xp = elements.length_x(x_pos)
+            yp = elements.length_y(y_pos)
+            wd = elements.length(dim)
+        except ValueError:
+            channel(_("Invalid dimensions provided"))
+            return
         # Make sure we translate any patterns if needed
-        msg = elements.mywordlist.translate(msg)
+        code = elements.mywordlist.translate(code)
         # - version=None    We don't preestablish the size but let the routine decide
         # - box_size        controls how many pixels each “box” of the QR code is.
         # - border          how many boxes thick the border should be (the default
@@ -303,14 +698,16 @@ def register_qr_code_stuff(kernel):
             errc = qrcode.constants.ERROR_CORRECT_M
         if border is None or border < 4:
             border = 4
+        if boxsize is None:
+            boxsize = 10
         qr = qrcode.QRCode(
             version=version,
             error_correction=errc,
-            box_size=10,
+            box_size=boxsize,
             border=border,
         )
 
-        qr.add_data(msg)
+        qr.add_data(code)
         factory = qrcode.image.svg.SvgPathImage
         qr.image_factory = factory
         if version is None:
@@ -325,11 +722,11 @@ def register_qr_code_stuff(kernel):
         txt = str(img.to_string())
         pattern = 'viewBox="'
         idx = txt.find(pattern)
-        if idx>=0:
-            txt = txt[idx + len(pattern):]
+        if idx >= 0:
+            txt = txt[idx + len(pattern) :]
             idx = txt.find('"')
             if idx >= 0:
-                txt = txt [:idx]
+                txt = txt[:idx]
                 vp = txt.split(" ")
                 dim_x = str(float(vp[2]) - 2 * border) + "mm"
                 dim_y = str(float(vp[3]) - 2 * border) + "mm"
@@ -340,11 +737,11 @@ def register_qr_code_stuff(kernel):
         pathstr = ""
         pattern = '<path d="'
         idx = txt.find(pattern)
-        if idx>=0:
-            txt = txt[idx + len(pattern):]
+        if idx >= 0:
+            txt = txt[idx + len(pattern) :]
             idx = txt.find(" id=")
             if idx >= 0:
-                txt = txt [:idx-1]
+                txt = txt[: idx - 1]
                 pathstr = txt
         if len(pathstr):
             mm = elements.length("1mm")
@@ -374,13 +771,14 @@ def register_qr_code_stuff(kernel):
                 stroke_width=0,
                 stroke_scaled=False,
                 type="elem path",
-                fillrule= 0,     # nonzero
-                label=f"qr={msg}",
+                fillrule=0,  # nonzero
+                label=f"qr={code}",
             )
             node.matrix.post_translate(-node.bounds[0] + xp, -node.bounds[1] + yp)
             node.modified()
-            elements.set_emphasis([node])
-            node.focus()
+            # elements.set_emphasis([node])
+            # node.focus()
 
         data = [node]
+        elements.signal("element_added", data)
         return elements, data
